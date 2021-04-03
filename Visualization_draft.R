@@ -134,7 +134,8 @@ ggplot(data_bubb_rural,aes(Population,ViolentCrime,size = PropertyCrime,color=Se
 
 
 #(3) Radar chart
-#关于各类crime的占比应该是各observation内求比例，然后再进行同列各observation标准化，
+#change way to standardized, heatmap before radar chart to better intutive comparison
+#between states
 #https://www.r-graph-gallery.com/142-basic-radar-chart.html
 data_rad_std<-data_comb
 data_rad_std$Murder<-data_rad_std$Murder/data_rad_std$Population*1000
