@@ -3,74 +3,109 @@ library(plotly)
 library(gapminder)
 library(dplyr)
 library(tidyverse)
-setwd("/Users/zhouwenxiao/Desktop/STAT5225-R and SAS Programming/Group Project/Data")
-f1999<-read.csv("clean_1999.csv")
-f2000<-read.csv("clean_2000.csv")
-f2001<-read.csv("clean_2001.csv")
-f2002<-read.csv("clean_2002.csv")
-f2003<-read.csv("clean_2003.csv")
-f2004<-read.csv("clean_2004.csv")
-f2005<-read.csv("clean_2005.csv")
+library(Hmisc)
 
-#add a year column
-f1999$year<-rep(1999,dim(f1999)[1])
-f2000$year<-rep(2000,dim(f2000)[1])
-f2001$year<-rep(2001,dim(f2001)[1])
-f2002$year<-rep(2002,dim(f2002)[1])
-f2003$year<-rep(2003,dim(f2003)[1])
-f2004$year<-rep(2004,dim(f2004)[1])
-f2005$year<-rep(2005,dim(f2005)[1])
-
-#Data combine
-data_comb<-rbind(f1999,f2000,f2001,f2002,f2003,f2004)
+#Load data from Year 2005 to 2019
+setwd("/Users/zhouwenxiao/Desktop/USCrime")
+load("fbi_2005to2019.RData")
 
 
+#Changes
 #(1)Bar plots in R Shiny
 #Top 5 ViolentCrime states within years and time zones 
-data_bar<-data_comb[,c(1,2,3,4,12,13,14)]
-#https://wenku.baidu.com/view/5bbeb3f16d85ec3a87c24028915f804d2a1687da.html
-pacific<-which(data_bar$State %in% c("WASHINGTON","OREGON","CALIFORNIA","NEVADA","ALASKA","HAWAII"))
-mountain<-which(data_bar$State %in% c("MONTANA","IDAHO","UTAH","ARIZONA","WYOMING","COLORADO","NEW MEXICO"))
-central<-which(data_bar$State %in% c("NORTH DAKOTA","SOUTH DAKOTA","NEBRASKA","KANSAS","OKLAHOMA","TEXAS",
-                                  "MINNESOTA","IOWA","MISSOURI","ARKANSAS","LOUISIANA","WISCONSIN",
-                                  "ILLINOIS","TENNESSEE","MISSISSIPPI","ALABAMA"))
+data_bar<-area_level_2005to2019[,c(1,2,3,4,5,6,11,15,16)]
+pacific<-which(data_bar$State %in% capitalize(tolower(c("WASHINGTON","OREGON",
+                          "CALIFORNIA","NEVADA","ALASKA","HAWAII"))))
+mountain<-which(data_bar$State %in% capitalize(tolower(c("MONTANA","IDAHO",
+                        "UTAH","ARIZONA","WYOMING","COLORADO","NEW MEXICO"))))
+central<-which(data_bar$State %in% capitalize(tolower(c("NORTH DAKOTA","SOUTH DAKOTA",
+                        "NEBRASKA","KANSAS","OKLAHOMA","TEXAS",
+                        "MINNESOTA","IOWA","MISSOURI","ARKANSAS","LOUISIANA","WISCONSIN",
+                        "ILLINOIS","TENNESSEE","MISSISSIPPI","ALABAMA"))))
 index2<-c(pacific,mountain,central)
 index1<-seq(1,dim(data_bar)[1],1)
 eastern<-index1[!index1 %in% index2]
 data_bar$index<-index1
 data_bar$Section<-ifelse(data_bar$index %in% pacific,"Pacific",
-                      ifelse(data_bar$index %in% mountain,"Mountain",
-                             ifelse(data_bar$index %in% central,"Central","Eastern")))
-data_bar$ViolentCrime1<-round(data_bar$ViolentCrime/data_bar$Population,4)
-data_bar$PropertyCrime1<-round(data_bar$PropertyCrime/data_bar$Population,4)
-
+                         ifelse(data_bar$index %in% mountain,"Mountain",
+                                ifelse(data_bar$index %in% central,"Central","Eastern")))
+data_bar$ViolentCrime1<-ifelse(data_bar$Population==0,0,ifelse(is.na(data_bar$ViolentCrimeRevised),
+                              round(data_bar$ViolentCrimeLegacy/data_bar$Population,4),
+                                      round(data_bar$ViolentCrimeRevised/data_bar$Population,4)))
+                               
+                               
+data_bar$PropertyCrime1<-ifelse(data_bar$Population==0,0,round(data_bar$PropertyCrime/data_bar$Population,4))
 
 #Interactive Bar plot--Violent Crime
-data_bar_vio<-data_bar[with(data_bar,order(year,-ViolentCrime1)),]
-data_bar_vio<-data_bar_vio[,c(1,2,5,7,8,9,10)]
+#delete rows with NA in ViolentCrime or PropertyCrime
+data_bar<-data_bar[-c(which(is.na(data_bar$ViolentCrime1)),which(is.na(data_bar$PropertyCrime1))),]
+data_bar_vio<-data_bar[with(data_bar,order(Year,-ViolentCrime1)),]
+data_bar_vio<-data_bar_vio[,c(1,2,3,5,11,12,13)]
+top_5_states_violent<-data_bar_vio %>%
+  filter(Section==input$Section)  %>%
+  filter(Year==input$Year)  %>%
+  filter(Area==input$Area) %>%
+  top_n(5,ViolentCrime1)
 library(shiny)
 ui<-fluidPage(
-    titlePanel("Top 5 states in ViolentCrime!"),
-    selectInput('Section','Select time zone',selected='Pacific',
-                choices=c("Pacific","Mountain","Central","Eastern")),
-    sliderInput('year','Select year',value=1999,min=1999,max=2004),
-    selectInput('Area','Select an area type',selected='Rural',
-                 choices=c("Cities outside metropolitan areas","Rural",
-                           "Metropolitan Statistical Area")),
-    plotOutput('plot_top_5_states')
+  titlePanel("Top 5 states in ViolentCrime!"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput('Section','Select time zone',selected='Pacific',
+              choices=c("Pacific","Mountain","Central","Eastern")),
+      sliderInput('Year','Select year',value=2005,min=2005,max=2019),
+      selectInput('Area','Select an area type',selected='Metropolitan Statistical Area',
+                  choices=c("Cities outside metropolitan areas","Rural",
+                            "Metropolitan Statistical Area"))
+      ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Plot",plotOutput('plot_top_5_states_violent')),
+        tabPanel("Table",tableOutput('table_top_5_states_details'))
+     )
+    )
+  )
 )
 server<-function(input,output,session){
-  output$plot_top_5_states<-renderPlot({
-    top_5_states<-data_bar_vio %>%
-       filter(Section==input$Section)  %>%
-      filter(year==input$year)  %>%
-      filter(Area==input$Area) %>%
-      top_n(5,ViolentCrime1)
-    ggplot(top_5_states,aes(x=State,y=ViolentCrime))+
+  output$plot_top_5_states_violent<-renderPlot({
+    ggplot(top_5_states_violent,aes(x=State,y=ViolentCrime1))+
       geom_col(fill='#263e63')
+  })
+  output$table_top_5_states_details<-renderTable({
+    top_5_states_violent
   })
 }
 shinyApp(ui=ui,server=server)
+
+
+
+
+
+
+
+transform <- function(col, maximum = 100) {
+  lambda_list <- MASS::boxcox(col ~ 1, 
+                              lambda = seq(-3, 3, 0.1), plotit = FALSE)
+  lambda <- (lambda_list$x)[which.max(lambda_list$y)]
+  if (near(lambda, 0)) {
+    res <- log(col)
+  } else {
+    res <- (col^lambda - 1) / lambda
+  }
+  min <- min(res, na.rm = TRUE)
+  max <- max(res, na.rm = TRUE)
+  (res - min) / (max - min) * maximum
+}
+
+data_comb<- state_rate_per_100k_2005to2019 %>% 
+  mutate(across(4:14, transform))
+
+
+
+
+
+
+
 
 
 
