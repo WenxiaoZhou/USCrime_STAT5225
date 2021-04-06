@@ -50,7 +50,7 @@ ui<-fluidPage(
               choices=c("Pacific","Mountain","Central","Eastern")),
       sliderInput('Year','Select year',value=2005,min=2005,max=2019),
       selectInput('Area','Select an area type',selected='Metropolitan Statistical Area',
-                  choices=c("Cities outside metropolitan areas","Rural",
+                  choices=c("Cities outside metropolitan areas","Nonmetropolitan counties",
                             "Metropolitan Statistical Area"))
       ),
     mainPanel(
@@ -220,14 +220,23 @@ shinyApp(ui = ui, server = server)
 
 
 
+
+
 #(3) Animated Bubble Chart
 #Method 1
 #More data need for better visualization: population, GDP, relatioship to Crime counts
+#https://towardsdatascience.com/create-hans-roslings-famous-animated-bubble-chart-in-a-single-piped-r-command-9c50a485259
+library(viridis)
 library(gapminder)
 library(ggplot2)
 library(gganimate)
 
-data_bubb<-state_rate_per_100k_2005to2019[,c(1,2,3,4,9,13,14)]
+
+data_bubb<-state_rate_per_100k_2005to2019 %>% 
+  mutate(across(4:14, transform))
+#data_bubb$State<-toupper(data_bubb$State)
+
+
 pacific<-which(data_bubb$State %in% capitalize(tolower(c("WASHINGTON","OREGON",
                                                         "CALIFORNIA","NEVADA","ALASKA","HAWAII"))))
 mountain<-which(data_bubb$State %in% capitalize(tolower(c("MONTANA","IDAHO",
@@ -243,45 +252,53 @@ data_bubb$index<-index1
 data_bubb$Section<-ifelse(data_bubb$index %in% pacific,"Pacific",
                          ifelse(data_bubb$index %in% mountain,"Mountain",
                                 ifelse(data_bubb$index %in% central,"Central","Eastern")))
-data_bubb$ViolentCrime1<-ifelse(data_bubb$Population==0,0,ifelse(is.na(data_bubb$ViolentCrimeRevised),
-                                                               round(data_bubb$ViolentCrimeLegacy/data_bubb$Population,4),
-                                                               round(data_bubb$ViolentCrimeRevised/data_bubb$Population,4)))
 
-data_bubb$PropertyCrime1<-ifelse(data_bubb$Population==0,0,round(data_bubb$PropertyCrime/data_bubb$Population,4))
+#Define a subset data includes Year, State, Section, ViolentCrime(total), PropertyCrime(total)
+data_bubb$Violentcom<-ifelse(is.na(data_bubb$ViolentCrimeRevised),data_bubb$ViolentCrimeLegacy,
+                             data_bubb$ViolentCrimeRevised)
+data_bubb1<-data_bubb[,c(1:3,9,16,17)]
+names(data_bubb1)<-c("State","Year","Population","PropertyCrime","Section","ViolentCrime")
 
-#Make a copy of the data to draw the bubble chart
-data_bubb1<-data_bubb
-
-data_bubb_rural<-data_bubb[which(data_bubb$Area=='Rural'),]
-data_bubb_rural$year<-as.integer(data_bubb_rural$year)
-ggplot(data_bubb_rural,aes(Population,ViolentCrime,size=PropertyCrime,color=Section))+
-  geom_point(alpha=0.7) +
-  theme_bw()+
-  labs(title='Year: {frame_time}',x='Population',y='Violent Crime')+
-  transition_time(year)+
-  ease_aes("linear")
-anim_save('bubbleplot_sample.gif')
+data_bubb1$Year<-as.character(data_bubb1$Year)
+ggplot(data_bubb1,aes(PropertyCrime,ViolentCrime,size=Population,color=Section))+
+  geom_point(alpha = 0.5) + 
+  scale_size(range = c(1,16), guide = FALSE) +    
+  scale_x_continuous(limits = c(0, 100)) +  
+  scale_y_continuous(limits = c(0, 100)) + 
+  scale_color_viridis(discrete = TRUE, name = "Time Zone", option = "viridis") + 
+  labs(x='Property Crime',y='Violent Crime') + 
+  theme_classic() +  
+  geom_text(aes(x =85, y = 100, label =Year),size = 11, 
+            color = 'lightgrey',family="Times")+
+  ggtitle("Relationship between population and ViolentCrime&PropertyCrime")+
+  transition_states(Year,transition_length = 1,state_length = 1) +   
+  ease_aes('cubic-in-out')
+anim_save('bubbleplot.gif')
 
 
 #Method 2
-#https://towardsdatascience.com/create-hans-roslings-famous-animated-bubble-chart-in-a-single-piped-r-command-9c50a485259
-library(viridis)
-library(ggplot2)
-library(gganimate)
-data_bubb_rural$year<-as.character(data_bubb_rural$year)
-ggplot(data_bubb_rural,aes(Population,ViolentCrime,size = PropertyCrime,color=Section))+
-  geom_point(alpha = 0.5) + 
-  scale_size(range = c(0.1,16), guide = FALSE) +    
-  scale_x_continuous(limits = c(0, 2000000)) +  
-  scale_y_continuous(limits = c(0, 7000)) + 
-  scale_color_viridis(discrete = TRUE, name = "Time Zone", option = "viridis") + 
-  labs(x='Population',y='Violent Crime') + 
-  theme_classic() +  
-  geom_text(aes(x = 1500000, y = 6000, label =year),size = 12, 
-            color = 'lightgrey',family="Times")+
-  ggtitle("Relationship between population and ViolentCrime&PropertyCrime")+
-  transition_states(year,transition_length = 1,state_length = 1) +   
-  ease_aes('cubic-in-out')
+library(plotly)
+library(gapminder)
+p <- data_bubb1 %>%
+  plot_ly(
+    x = ~ViolentCrime, 
+    y = ~PropertyCrime, 
+    size = ~Population, 
+    color = ~Section, 
+    frame = ~Year, 
+    text = ~State, 
+    hoverinfo = "text",
+    type = 'scatter',
+    mode = 'markers'
+  ) %>%
+  layout(
+    xaxis = list(
+      type = "log"
+    )
+  )
+p
+
+
 
 
 
