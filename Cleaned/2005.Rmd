@@ -1,0 +1,224 @@
+---
+title: "Data Cleaning Report for FBI 2005"
+author: "Min Lin"
+date: "2021/03/18"
+header-includes:
+  - \usepackage[labelfont=bf,textfont=md]{caption}  
+  - \usepackage{float}
+  - \usepackage{enumerate}
+  - \setlength{\parskip}{1em}
+  - \usepackage{indentfirst} 
+  - \usepackage{amsmath}
+output:
+  rmdformats::readthedown:
+    toc: 2
+fontsize: 12pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE,fig.align='center',fig.pos="H")
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+![](data-science-explore.png) 
+
+# Import
+
+```{r}
+# only need to change the path
+path <- "C:\\Users\\Min\\OneDrive\\UConn\\Spring 2021\\BIST 5225_Data Management and Programming in R and SAS\\Group Assignment\\Crime_by_State\\2005.xls"
+# skip titles. In "2005.xls", there are three rows for useless titles. 
+fbi2005 <- readxl::read_excel(path, skip = 3) 
+```
+
+In "2005.xls", the first three rows are titles. 
+
+1. "Table 5": useless
+2. "Crime in the United States": useless
+3. "by State, 2005": the only useful information is "2005", but it has been captured by the name of our RData `fbi2005`.
+
+Also, we notice that after the 506th row are footnotes. 
+
+```{r}
+fbi2005$State %>% str_which("1")
+fbi2005[506:510,]
+fbi2005 <- fbi2005[1:506, 1:13]
+```
+
+The footnotes are copied here for future reference. 
+
+> __Footnotes__  
+1. Includes offenses reported by the Zoological Police and the Metro Transit Police.  
+2. Limited data for 2005 were available for Illinois.  See Data Declaration.  
+__NOTE__:  Although arson data are included in the trend and clearance tables, sufficient data are not available to estimate totals for this offense.  Therefore, no arson data are published in this table.				
+
+		
+```{r}
+# Columns names. I use "index" for the third column. 
+names(fbi2005)  <- c("State","Area", "index", "Population", "ViolentCrimeLegacy", 
+          "Murder", "RapeLegacy", "Robbery", "AggravatedAssault", 
+          "PropertyCrime", "Burglary", "LarcenyTheft",	"MotorTheft")
+```
+
+Note that we use "RapeLegacy" to stress on that it was using the legacy definition of Rape.
+
+# Tidy 
+## Prepare ID and pivoting index
+First of all, we need to identify the ID that uniquely defines a row. In our datasets, ID = {State, Area}. The State column contains 52 different values: 50 states along with Washington, D.C. and Puerto Rico. 
+```{r}
+fbi2005$State %>% unique %>% na.omit %>% length # str_detect("PUERTO") %>% any
+fbi2005_1 <- fbi2005 %>% 
+        # Replace NA in the "State" column. 
+        # Every NA is filled by the first non-NA value on its above
+        fill(State, .direction = "down") %>% 
+        # since State has been fixed, grouped by it
+        group_by(State) %>% 
+        # within each state, fill for Area
+        # grouped by State to prevent the NA of an Area from being filled 
+        #       by values from the previous state
+        fill(Area, .direction = "down") %>% 
+        # modify values of index for pivot_wider (very important)
+        # we will use the three values of index 
+        #       to convert the data within each ID to a wider version
+        mutate(
+                Area = if_else(Area == "Total", "State Total", Area),
+                index = case_when(
+                        index == "Area actually reporting"             ~ "act",
+                        index %in% c("Estimated total", 
+                                     "Rate per 100,000 inhabitants")   ~ "est",
+                        TRUE                                           ~ "popu" # NA -> "popu"
+                )
+        ) %>% ungroup()
+
+```
+
+## Change values of State to propery case and trim ending digits
+```{r}
+state <- fbi2005_1 %>% pull(State)
+state[str_detect(state, "\\d$")] %>% unique # ends with a digit
+```
+
+```{r}
+fbi2005_1$State <- state %>% str_remove_all("[^[:alpha:][:blank:]]") %>% 
+        str_trim() %>% str_to_title()
+fbi2005_1$State %>% unique # nice! 50 states + DC + Puerto Rico
+```
+## Pivot wider
+```{r}
+fbi2005_2 <- fbi2005_1 %>% 
+        pivot_wider(names_from = index, values_from = Population:MotorTheft) 
+```
+
+```{r}
+fbi2005_3 <- fbi2005_2 %>%
+        rename(Population = Population_popu) %>%
+        mutate(
+                AreaActuallyReporting = round(as.numeric(Population_act), 3), # three digits
+                .after = Area
+        ) %>% select(
+                -Population_est, 
+                -Population_act,
+                # we have renamed Population_popu, so simply drop all columns ending with "_popu"
+                -ends_with("_popu")  
+        )
+# deal with "None" and NA is Population
+# all "None" with two AreaActuallyReporting not NA 
+fbi2005_3 %>% filter(is.na(Population) | Population == "None") %>% print(width = Inf)
+popu_impute <- fbi2005_3 %>% rowid_to_column() %>% 
+        filter(is.na(Population) | Population == "None", 
+               AreaActuallyReporting == 1) %>% .[["rowid"]] 
+popu_impute
+
+fbi2005_3$Population[popu_impute] <- "0"
+
+fbi2005_3 <- fbi2005_3 %>% 
+        # Population contains "None"; remove those rows 
+        # also, before pivoting, Population is a character because of the appearance of "None"
+        filter(Population != "None") %>% # NA's are also dropped
+        mutate(Population = as.numeric(Population)) 
+```
+## Impute NA in est
+As mentioned before, there are implicit missing in the dataset. Pivoting wider makes it explicit and automatically replaces missing elements by NA's. However, before filling NA in est by corresponding act, we need to be very cautious. 
+```{r}
+fbi2005_3 %>% filter(Area != "State Total") %>% 
+        map_dbl(~ sum(is.na(.x))) 
+fbi2005_3 %>% filter(Area != "State Total") %>% 
+        filter(is.na(ViolentCrimeLegacy_act), is.na(ViolentCrimeLegacy_est)) 
+```
+
+```{r}
+fbi2005_3 %>% filter(Area != "State Total") %>% 
+        select(AreaActuallyReporting, starts_with("Rape")) %>% 
+        filter(is.na(RapeLegacy_est)) %>% 
+        summarize(count_na_RapeLegacy_act = sum(is.na(RapeLegacy_act)), 
+                  nrow = n(), 
+                  Area_percent_1 = sum(AreaActuallyReporting == 1))
+```
+So we trace all 43 missing in est to AreaActuallyReporting = 1. 
+
+```{r}
+fbi2005_3 %>% filter(AreaActuallyReporting %>% near(1)) %>% 
+        select(ends_with("_est")) %>% 
+        map_dbl(~ sum(is.na(.x)))
+```
+Hooray! 
+```{r}
+# Actually can be replaced by tidyr::complete() -> tidyr::fill() workflow before pivoting.
+# But I have no idea how to expand the dataset. 
+impute_est <- function(.tbl) {
+        # To fill NA row-wise, we first have to obtain sub-tibbles
+        #       that consist of all numeric columns. 
+        # Then we can treat them as matrices. 
+        suppressWarnings(suppressMessages(require(zoo)))
+        non_dbl <- .tbl %>% select(!where(is_numeric))
+        non_dbl %>% bind_cols(
+                .tbl %>% select(where(is_numeric)) %>% 
+                apply(1, zoo::na.locf) %>% 
+                t() %>% 
+                as_tibble()
+        )
+}
+
+impute <- (fbi2005_3$AreaActuallyReporting == 1) %>% replace_na(FALSE)
+# we cannot impute NA due to MINNESOTA2
+not_impute <- is.na(fbi2005_3$ViolentCrimeLegacy_act)
+
+later_impute <- (impute & not_impute) %>% which 
+impute <- impute & (!not_impute)
+
+# since Minnesota does not come with AreaActualReporting = 1
+# we expect that later_impute is empty
+fbi2005_3[later_impute, ] # nice
+
+fbi2005_4 <- fbi2005_3
+
+fbi2005_4[impute, ] <- fbi2005_3[impute, ] %>% impute_est()
+fbi2005_4[impute, ] %>% complete.cases() %>% all
+```
+
+# Split 
+
+```{r}
+fbi2005_act <- fbi2005_4 %>% 
+        select(State:Population, ends_with("_act")) %>% 
+        rename_with(~ str_remove(.x, "_act"), ends_with("_act"))
+
+fbi2005_est <- fbi2005_4 %>% 
+        select(State:Population, ends_with("_est")) %>% 
+        rename_with(~ str_remove(.x, "_est"), ends_with("_est"))
+
+# don't have to imput any more
+fbi2005_est %>% filter(Area != "State Total") %>% complete.cases() %>% all 
+
+save(fbi2005_act, fbi2005_est, file = "tidy_2005.RData")
+```
+
+
+
+
+
+

@@ -1,0 +1,379 @@
+---
+title: "Data Cleaning Report for FBI 1995"
+author: "Min Lin"
+date: "2021/03/18"
+header-includes:
+  - \usepackage[labelfont=bf,textfont=md]{caption}  
+  - \usepackage{float}
+  - \usepackage{enumerate}
+  - \setlength{\parskip}{1em}
+  - \usepackage{indentfirst} 
+  - \usepackage{amsmath}
+output:
+  rmdformats::readthedown:
+    toc: 2
+fontsize: 12pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE,fig.align='center',fig.pos="H")
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(magrittr)
+```
+![](data-science-explore.png) 
+
+# Import
+
+```{r}
+# only need to change the path
+path <- "C:\\Users\\Min\\OneDrive\\UConn\\Spring 2021\\BIST 5225_Data Management and Programming in R and SAS\\Group Assignment\\Crime_by_State\\1995.xlsx"
+# skip titles. In "1995.xls", there are three rows for useless titles. 
+fbi1995 <- readxl::read_excel(path) 
+```
+Also, we notice that after the 640th row are footnotes. 
+
+```{r}
+fbi1995$Area %>% str_which("1") %>% last()
+fbi1995[640:641,]
+fbi1995 <- fbi1995[1:640, -c(4, 5, 15, 16)]
+```
+
+The footnotes are copied here for future reference. 
+
+> __Footnotes__  
+1. Although arson data were included in the trend and clearance tables, sufficient data are not available to estimate totals for this offense.    
+2. Violent crimes are offenses of murder, forcible rape, robbery, and aggravated assault.  
+3. Property crimes are offenses of burglary, larceny-theft, and motor vehicle theft. Data are not included for the property crime of arson.  
+4. Includes offenses reported by the Zoological Police.  
+5. Complete data were not available for the states of Illinois, Kansas, and Montana; therefore, it was necessary that their crime counts be estimated. See “Offense Estimation,” pages 367–368 for details.  
+6. Aggravated assault figures for 1995 are not comparable to 1994. See “Crime Trends,” page 368 for details.  
+7. The increase in murders was the result of the bombing of the Alfred P. Murrah Federal Building in Oklahoma City.  
+8. The 1995 Bureau of the Census population estimate for Puerto Rico was not available prior to publication; therefore, no population or rates per 100,000 inhabitants are provided.
+__NOTE__:  Although arson data are included in the trend and clearance tables, sufficient data are not available to estimate totals for this offense.  Therefore, no arson data are published in this table.		
+
+		
+```{r}
+names(fbi1995)  <- c("index", "Population", "CrimeIndex",
+                     "ViolentCrimeLegacy", "PropertyCrime", 
+                     "Murder", "RapeLegacy", "Robbery", "AggravatedAssault", 
+                     "Burglary", "LarcenyTheft",	"MotorTheft")
+```
+
+We will clean the data column by column. 
+
+# Tidy 
+## Split `State` from index
+```{r}
+t <- fbi1995$index %>% str_remove_all("[^[:alpha:]]") %>% 
+        str_detect("[:lower:]")
+which(!t) %>% length # good 52
+
+parse_index <- function(.index) {
+        .index %>% str_remove_all("[^[:alpha:][:blank:]]") %>% 
+        str_trim() %>% str_to_title()
+}
+
+fbi1995 <- fbi1995 %>% mutate(index = parse_index(index),
+                              State = if_else(!t, index, NA_character_), 
+                   .before = everything()) %>% 
+        fill(State, .direction = "down")
+  
+```
+Remove rows `!t == TRUE`.   
+```{r}
+fbi1995_1 <- fbi1995 %>% filter(t)
+```
+
+
+## Split `Area` from index  
+
+1. Metropolitan Statistical Area (two rows, and information is in the second row)
+2. Cities Outside Metropolitan Areas  
+3. Rural
+4. State Total (two rows, and information is in the second row)  
+```{r}
+identical((fbi1995_1 %$% str_which(index, "^Area$")) - 1L,
+fbi1995_1 %$% str_which(index, "^Metropolitan"))
+
+identical((fbi1995_1 %$% str_which(index, "Inhabitants")) - 1L,
+fbi1995_1 %$% str_which(index, "^Rate Per"))
+
+fbi1995_2 <- fbi1995_1 %>% 
+        slice(-str_which(index, "^Metropolitan"), 
+              -str_which(index, "Rate Per")) %>% 
+        mutate(index = case_when(
+                index == "Area" ~ "Metropolitan Statistical Area",
+                index == "Cities Outside Metropolitan Areas" ~ "Cities outside metropolitan areas", 
+                index == "Area Actually Reporting" ~ "act",
+                index %in% c("Estimated Totals", 
+                                     "Inhabitants")   ~ "est",
+                index == "Total" ~ "State Total",
+                TRUE ~ index
+        )) %>% 
+        mutate(Area = case_when(
+                index %in% c("Metropolitan Statistical Area", 
+                             "Cities outside metropolitan areas",
+                             "Rural", "State Total") ~ index, 
+                TRUE ~ NA_character_
+        ), .after = State) %>% 
+        group_by(State) %>% 
+        fill(Area, .direction = "down") %>% 
+        mutate(index = if_else(index == Area, "popu", index)) %>% 
+        ungroup
+```
+# Parsing  
+## Parsing `ViolentCrimeLegacy` + `PropertyCrime` = `CrimeIndex`   
+Add row id for parsing reference.
+
+```{r}
+parse_crime <- function(.col, .digits = 1) {
+        if (is_character(.col)) {
+                # "179, 294" will be parsed as 179
+                # so that we have to remove blanks
+                str_remove_all(.col, " ") %>% 
+              parse_number() %>% round(.digits)
+        } else return(.col %>% round(.digits))
+}
+
+fbi1995_3 <- fbi1995_2 %>% 
+        rowid_to_column("id") %>% select(id, everything()) %>% 
+        mutate(across(c(CrimeIndex:PropertyCrime), parse_crime)) %>% 
+        mutate(diff_crime = ViolentCrimeLegacy + PropertyCrime - 
+                 CrimeIndex, .after = CrimeIndex)
+
+
+```   
+
+```{r}
+fbi1995_3 %>% 
+        filter(!is.na(diff_crime), 
+               !near(diff_crime, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t3
+```
+Weird parsing problems 
+
+```{r}
+fbi1995_2 %>% slice(t3) %>% select(State:PropertyCrime, -Population)
+```
+
+Seems like some `,` is mistaken for `.`.   
+1. For negative `diff_crime`, we manually parse `PropertyCrime` by replaing `,` by `.`.   
+2. For positive `diff_crime`, it's likely that `CrimeIndex` should be parsed again.  
+```{r}
+fbi1995_3$PropertyCrime[t3[1]] <- 16204.0
+fbi1995_3$PropertyCrime[t3[2]] <- 66021.0
+fbi1995_3$PropertyCrime[t3[4]] <- 2540.9
+
+fbi1995_3$CrimeIndex[t3[3]] <- 494903.0
+
+fbi1995_3 %>% slice(t3) %>% 
+        transmute(diff_crime = ViolentCrimeLegacy + 
+                    PropertyCrime - CrimeIndex) # perfect
+```
+
+```{r}
+fbi1995_3 <- fbi1995_3 %>% select(!c(CrimeIndex:diff_crime))
+```
+
+
+
+## Parsing `ViolentCrimeLegacy` = `Murder` + `RapeLegacy` + `Robbery` + `AggravatedAssault`
+```{r}
+fbi1995_4 <- fbi1995_3 %>% 
+        mutate(across(c(Murder:AggravatedAssault), parse_crime)) %>% 
+        mutate(diff_v = Murder + RapeLegacy + 
+                 Robbery + AggravatedAssault - ViolentCrimeLegacy, 
+               .after = ViolentCrimeLegacy)
+
+fbi1995_4 %>% 
+        filter(!is.na(diff_v), 
+               !near(diff_v, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t4
+
+fbi1995_4$diff_v %>% na.omit() %>% near(0, tol = 0.11) %>% all # good 
+
+```
+
+```{r}
+fbi1995_4 <- fbi1995_4 %>% select(!diff_v)
+```
+
+
+## Parsing `PropertyCrime` = `Burglary` + `LarcenyTheft` + `MotorTheft`   
+```{r}
+fbi1995_5 <- fbi1995_4 %>% 
+        mutate(across(c(Burglary:MotorTheft), parse_crime)) %>% 
+        mutate(diff_p = Burglary + LarcenyTheft + MotorTheft -
+                 PropertyCrime, 
+               .after = PropertyCrime)
+
+fbi1995_5 %>% 
+        filter(!is.na(diff_p), 
+               !near(diff_p, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t5
+
+fbi1995_5$diff_p %>% na.omit() %>% near(0, tol = 0.11) %>% all # good 
+```
+
+```{r}
+fbi1995_5 <- fbi1995_5 %>% select(!c(diff_p, id))
+```
+
+
+# Pivoting
+## Prepare ID and pivoting index
+First of all, we need to identify the ID that uniquely defines a row. In our datasets, ID = {State, Area}. The State column contains 52 different values: 50 states along with Washington, D.C. and Puerto Rico. 
+```{r}
+fbi1995_5$State %>% unique %>% length # str_detect("PUERTO") %>% any
+
+fbi1995_5 %>% 
+        count(State, Area, index) %>% 
+        filter(n > 1) # uniquely defines a row
+```  
+
+To match with data from 2005 to 2019, we rearrange the order of columns.  
+
+```{r}
+fbi1995_5 <- fbi1995_5 %>% 
+        select(State:ViolentCrimeLegacy, Murder:AggravatedAssault, 
+               PropertyCrime, Burglary:MotorTheft)
+```
+
+## Impute some NA's in act by zeros before pivoting  
+```{r}
+fbi1995_5 %>% rowid_to_column() %>% 
+        filter(index == "act") %>% 
+        filter(!complete.cases(.)) %>% print() %>% pull(rowid) -> t5
+```
+We have strong confidence to claim that these NA's are actually zero, because the addition relationship among columns are preserved. 
+
+```{r}
+fbi1995_5[t5, 5:13] <- fbi1995_5[t5, 5:13] %>% replace(is.na(.), 0)
+
+fbi1995_5 %>% rowid_to_column() %>% 
+        filter(index == "act") %>% 
+        filter(!complete.cases(.)) 
+```
+
+
+## Pivot wider
+```{r}
+fbi1995_6 <- fbi1995_5 %>% 
+        pivot_wider(names_from = index, values_from = Population:MotorTheft) 
+```
+
+```{r}
+fbi1995_6 <- fbi1995_6 %>%
+        rename(Population = Population_popu) %>%
+        mutate(
+                AreaActuallyReporting = round(as.numeric(Population_act), 3), # three digits
+                .after = Area
+        ) %>% select(
+                -Population_est, 
+                -Population_act,
+                # we have renamed Population_popu, so simply drop all columns ending with "_popu"
+                -ends_with("_popu")  
+        )
+# deal with "None" and NA is Population
+# all "None" with two AreaActuallyReporting not NA 
+fbi1995_6 %>% filter(is.na(Population) | str_to_upper(Population) == "NONE") %>% print(width = Inf)
+```  
+We do not want to impute NA in `Population` for Puerto Rico because of the footnote  
+
+> 8. The 1995 Bureau of the Census population estimate for Puerto Rico was not available prior to publication; therefore, no population or rates per 100,000 inhabitants are provided.  
+
+As a result, the `State Total` row of Puerto Rico should be deleted accordingly, because we cannot compute the `Rate of crime per 100,000 inhabitants`. But it's ok to treat `Population` in other rows as "0".
+
+```{r}
+popu_impute <- fbi1995_6 %>% rowid_to_column() %>% 
+        filter(is.na(Population) | Population == "None", 
+               AreaActuallyReporting == 1) %>% .[["rowid"]] 
+popu_impute
+
+fbi1995_6$Population[popu_impute] <- "0"
+
+fbi1995_6 <- fbi1995_6 %>% 
+        # Population contains "None"; remove those rows 
+        # also, before pivoting, Population is a character because of the appearance of "None"
+        filter(str_to_upper(Population) != "NONE") %>% # NA's are also dropped
+        mutate(Population = parse_crime(Population, 0) %>% as.integer) 
+```
+
+## Impute NA in est
+As mentioned before, there are implicit missing in the dataset. Pivoting wider makes it explicit and automatically replaces missing elements by NA's. However, before filling NA in est by corresponding act, we need to be very cautious. 
+```{r}
+fbi1995_6 %>% filter(Area != "State Total") %>% 
+        map_dbl(~ sum(is.na(.x))) 
+fbi1995_6 %>% filter(Area != "State Total") %>% 
+        filter(is.na(ViolentCrimeLegacy_act), is.na(ViolentCrimeLegacy_est)) 
+```
+
+```{r}
+fbi1995_6 %>% filter(Area != "State Total") %>% 
+        select(AreaActuallyReporting, starts_with("Rape")) %>% 
+        filter(is.na(RapeLegacy_est)) %>% 
+        summarize(count_na_RapeLegacy_act = sum(is.na(RapeLegacy_act)), 
+                  nrow = n(), 
+                  Area_percent_1 = sum(AreaActuallyReporting == 1))
+```
+So we trace all 45 missing in est to AreaActuallyReporting = 1. 
+
+```{r}
+fbi1995_6 %>% filter(AreaActuallyReporting %>% near(1)) %>% 
+        select(ends_with("_est")) %>% 
+        map_dbl(~ sum(is.na(.x)))
+```
+Hooray! 
+```{r}
+# Actually can be replaced by tidyr::complete() -> tidyr::fill() workflow before pivoting.
+# But I have no idea how to expand the dataset. 
+impute_est <- function(.tbl) {
+        # To fill NA row-wise, we first have to obtain sub-tibbles
+        #       that consist of all numeric columns. 
+        # Then we can treat them as matrices. 
+        suppressWarnings(suppressMessages(require(zoo)))
+        non_dbl <- .tbl %>% select(!where(is_numeric))
+        non_dbl %>% bind_cols(
+                .tbl %>% select(where(is_numeric)) %>% 
+                apply(1, zoo::na.locf) %>% 
+                t() %>% 
+                as_tibble()
+        )
+}
+
+impute <- (fbi1995_6$AreaActuallyReporting == 1) %>% replace_na(FALSE)
+
+
+fbi1995_7 <- fbi1995_6
+
+fbi1995_7[impute, ] <- fbi1995_6[impute, ] %>% impute_est()
+fbi1995_7[impute, ] %>% complete.cases() %>% all
+```
+
+# Split 
+
+```{r}
+fbi1995_act <- fbi1995_7 %>% 
+        select(State:Population, ends_with("_act")) %>% 
+        rename_with(~ str_remove(.x, "_act"), ends_with("_act"))
+
+fbi1995_est <- fbi1995_7 %>% 
+        select(State:Population, ends_with("_est")) %>% 
+        rename_with(~ str_remove(.x, "_est"), ends_with("_est"))
+
+# don't have to impute any more
+fbi1995_est %>% filter(Area != "State Total") %>% complete.cases() %>% all 
+
+save(fbi1995_act, fbi1995_est, file = "tidy_1995.RData")
+```
+
+
+
+
+
+

@@ -1,0 +1,357 @@
+---
+title: "Data Cleaning Report for FBI 2002"
+author: "Min Lin"
+date: "2021/03/18"
+header-includes:
+  - \usepackage[labelfont=bf,textfont=md]{caption}  
+  - \usepackage{float}
+  - \usepackage{enumerate}
+  - \setlength{\parskip}{1em}
+  - \usepackage{indentfirst} 
+  - \usepackage{amsmath}
+output:
+  rmdformats::readthedown:
+    toc: 2
+fontsize: 12pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE,fig.align='center',fig.pos="H")
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(magrittr)
+```
+![](data-science-explore.png) 
+
+# Import
+
+```{r}
+# only need to change the path
+path <- "C:\\Users\\Min\\OneDrive\\UConn\\Spring 2021\\BIST 5225_Data Management and Programming in R and SAS\\Group Assignment\\Crime_by_State\\2002.xls"
+# skip titles. In "2002.xls", there are three rows for useless titles. 
+fbi2002 <- readxl::read_excel(path, skip = 3) 
+```
+Also, we notice that after the 650th row are footnotes. 
+
+```{r}
+fbi2002$Area %>% str_which("Rate") %>% last()
+fbi2002[650:653, ]
+fbi2002 <- fbi2002[1:650, -c(4, 11, 15)]
+```  
+
+Remove empty rows.
+
+```{r}
+fbi2002 <- fbi2002 %>% 
+        filter(if_any(everything(), ~ !is.na(.)))
+```
+
+
+The footnotes are copied here for future reference. 
+
+> __Footnotes__  
+1. Although arson data are included in the trend and clearance tables, sufficient data are not available to estimate totals for this offense.  
+2. Violent crimes are offenses of murder, forcible rape, robbery, and aggravated assault. Property crimes are offenses of burglary, larceny-theft, and motor vehicle theft.  
+3. Includes offenses reported by the Zoological Police.  
+4. Limited data for 2002 were available.  See Offense Estimation, Appendix I, for details.      
+__Note__ Offense totals are based on all reporting agencies and estimates for unreported areas.
+
+		
+```{r}
+names(fbi2002)  <- c("index", "Population", "CrimeIndex",
+                     "ViolentCrimeLegacy", "PropertyCrime", 
+                     "Murder", "RapeLegacy", "Robbery", "AggravatedAssault", 
+                     "Burglary", "LarcenyTheft",	"MotorTheft")
+```
+
+We will clean the data column by column. 
+
+# Tidy 
+## Split `State` from index
+```{r}
+t <- fbi2002$index %>% str_remove_all("[^[:alpha:]]") %>% 
+        str_detect("[:lower:]")
+which(!t) %>% length # good 52
+
+parse_index <- function(.index) {
+        .index %>% str_remove_all("[^[:alpha:][:blank:]]") %>% 
+        str_trim() %>% str_to_title()
+}
+
+fbi2002 <- fbi2002 %>% mutate(index = parse_index(index),
+                              State = if_else(!t, index, NA_character_), 
+                   .before = everything()) %>% 
+        fill(State, .direction = "down")
+  
+```
+Remove rows `!t == TRUE`.   
+```{r}
+fbi2002_1 <- fbi2002 %>% filter(t)
+```
+
+
+## Split `Area` from index  
+
+1. Metropolitan Statistical Area
+2. Cities Outside Metropolitan Areas  
+3. Rural
+4. State Total  
+
+```{r}
+fbi2002_2 <- fbi2002_1 %>% 
+        mutate(index = case_when(
+                index == "Metropolitan Statistical Area" ~ "Metropolitan Statistical Area",
+                index == "Cities Outside Metropolitan Areas" ~ "Cities outside metropolitan areas", 
+                index == "Area Actually Reporting" ~ "act",
+                index == "Estimated Total"   ~ "est",
+                str_detect(index, "^Rate") ~ "est", 
+                str_detect(index, "State([:blank:])+Total") ~ "State Total", 
+                index == "Total" ~ "State Total",
+                TRUE ~ index
+        )) %>% 
+        mutate(Area = case_when(
+                index %in% c("Metropolitan Statistical Area", 
+                             "Cities outside metropolitan areas",
+                             "Rural", "State Total") ~ index, 
+                TRUE ~ NA_character_
+        ), .after = State) %>% 
+        group_by(State) %>% 
+        fill(Area, .direction = "down") %>% 
+        mutate(index = if_else(index == Area, "popu", index)) %>% 
+        ungroup
+```
+
+# Parsing  
+## Parsing `ViolentCrimeLegacy` + `PropertyCrime` = `CrimeIndex`   
+Add row id for parsing reference.
+
+```{r}
+parse_crime <- function(.col, .digits = 1) {
+        if (is_character(.col)) {
+                # "179, 294" will be parsed as 179
+                # so that we have to remove blanks
+                str_remove_all(.col, " ") %>% 
+              parse_number() %>% round(.digits)
+        } else return(.col %>% round(.digits))
+}
+
+fbi2002_3 <- fbi2002_2 %>% 
+        rowid_to_column("id") %>% select(id, everything()) %>% 
+        mutate(across(c(CrimeIndex:PropertyCrime), parse_crime)) %>% 
+        mutate(diff_crime = ViolentCrimeLegacy + PropertyCrime - 
+                 CrimeIndex, .after = CrimeIndex)
+
+
+```   
+
+```{r}
+fbi2002_3 %>% 
+        filter(!is.na(diff_crime), 
+               !near(diff_crime, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t3
+```  
+
+```{r}
+fbi2002_3$diff_crime %>% na.omit() %>% near(0, tol = 1.01) %>% all
+```
+
+
+```{r}
+fbi2002_3 <- fbi2002_3 %>% select(!c(CrimeIndex:diff_crime))
+```
+
+
+
+## Parsing `ViolentCrimeLegacy` = `Murder` + `RapeLegacy` + `Robbery` + `AggravatedAssault`
+```{r}
+fbi2002_4 <- fbi2002_3 %>% 
+        mutate(across(c(Murder:AggravatedAssault), parse_crime)) %>% 
+        mutate(diff_v = Murder + RapeLegacy + 
+                 Robbery + AggravatedAssault - ViolentCrimeLegacy, 
+               .after = ViolentCrimeLegacy)
+
+fbi2002_4 %>% 
+        filter(!is.na(diff_v), 
+               !near(diff_v, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t4
+```  
+
+```{r}
+fbi2002_4$diff_v %>% na.omit() %>% near(0, tol = 0.11) %>% all # good 
+```
+
+
+```{r}
+fbi2002_4 <- fbi2002_4 %>% select(!diff_v)
+```
+
+
+## Parsing `PropertyCrime` = `Burglary` + `LarcenyTheft` + `MotorTheft`   
+```{r}
+fbi2002_5 <- fbi2002_4 %>% 
+        mutate(across(c(Burglary:MotorTheft), parse_crime)) %>% 
+        mutate(diff_p = Burglary + LarcenyTheft + MotorTheft -
+                 PropertyCrime, 
+               .after = PropertyCrime)
+
+fbi2002_5 %>% 
+        filter(!is.na(diff_p), 
+               !near(diff_p, 0, tol = 0.11)) %>% # allow 0.1 rounding error
+        print() %>% pull(id) -> t5
+```
+
+```{r}
+fbi2002_5$diff_p %>% na.omit() %>% near(0, tol = 0.11) %>% all # good
+```
+
+
+```{r}
+fbi2002_5 <- fbi2002_5 %>% select(!c(diff_p, id))
+```
+
+
+# Pivoting
+## Prepare ID and pivoting index
+First of all, we need to identify the ID that uniquely defines a row. In our datasets, ID = {State, Area}. The State column contains 52 different values: 50 states along with Washington, D.C. and Puerto Rico. 
+```{r}
+fbi2002_5$State %>% unique %>% length # str_detect("PUERTO") %>% any
+
+fbi2002_5 %>% 
+        count(State, Area, index) %>% 
+        filter(n > 1) # uniquely defines a row
+```  
+
+To match with data from 2005 to 2019, we rearrange the order of columns.  
+
+```{r}
+fbi2002_5 <- fbi2002_5 %>% 
+        select(State:ViolentCrimeLegacy, Murder:AggravatedAssault, 
+               PropertyCrime, Burglary:MotorTheft)
+```
+
+## Impute some NA's in act by zeros before pivoting  
+
+```{r}
+fbi2002_5$index %>% unique # correct
+```  
+
+```{r}
+fbi2002_5 %>% rowid_to_column() %>% 
+        filter(index == "act") %>% 
+        filter(!complete.cases(.)) %>% print() %>% pull(rowid) -> t5
+```
+
+## Pivot wider
+```{r}
+fbi2002_6 <- fbi2002_5 %>% 
+        pivot_wider(names_from = index, values_from = Population:MotorTheft) 
+```
+
+```{r}
+fbi2002_6 <- fbi2002_6 %>%
+        rename(Population = Population_popu) %>%
+        mutate(
+                AreaActuallyReporting = round(as.numeric(Population_act), 3), # three digits
+                .after = Area
+        ) %>% select(
+                -Population_est, 
+                -Population_act,
+                # we have renamed Population_popu, so simply drop all columns ending with "_popu"
+                -ends_with("_popu")  
+        )
+# deal with "None" and NA is Population
+# all "None" with two AreaActuallyReporting not NA 
+fbi2002_6 %>% filter(is.na(Population) | str_to_upper(Population) == "NONE") %>% print(width = Inf)
+```  
+
+```{r}
+popu_impute <- fbi2002_6 %>% rowid_to_column() %>% 
+        filter(is.na(Population) | Population == "None", 
+               AreaActuallyReporting == 1) %>% .[["rowid"]] 
+popu_impute
+
+fbi2002_6$Population[popu_impute] <- "0"
+
+fbi2002_6 <- fbi2002_6 %>% 
+        # Population contains "None"; remove those rows 
+        # also, before pivoting, Population is a character because of the appearance of "None"
+        filter(str_to_upper(Population) != "NONE") %>% # NA's are also dropped
+        mutate(Population = parse_crime(Population, 0) %>% as.integer) 
+```
+
+## Impute NA in est
+As mentioned before, there are implicit missing in the dataset. Pivoting wider makes it explicit and automatically replaces missing elements by NA's. However, before filling NA in est by corresponding act, we need to be very cautious. 
+```{r}
+fbi2002_6 %>% filter(Area != "State Total") %>% 
+        map_dbl(~ sum(is.na(.x))) 
+fbi2002_6 %>% filter(Area != "State Total") %>% 
+        filter(is.na(ViolentCrimeLegacy_act), is.na(ViolentCrimeLegacy_est)) 
+```
+
+```{r}
+fbi2002_6 %>% filter(Area != "State Total") %>% 
+        select(AreaActuallyReporting, starts_with("Rape")) %>% 
+        filter(is.na(RapeLegacy_est)) %>% 
+        summarize(count_na_RapeLegacy_act = sum(is.na(RapeLegacy_act)), 
+                  nrow = n(), 
+                  Area_percent_1 = sum(AreaActuallyReporting == 1))
+```
+So we trace all 47 missing in `est` to `AreaActuallyReporting` = 1. 
+
+```{r}
+fbi2002_6 %>% filter(AreaActuallyReporting %>% near(1)) %>% 
+        select(ends_with("_est")) %>% 
+        map_dbl(~ sum(is.na(.x)))
+```
+Hooray! 
+```{r}
+# Actually can be replaced by tidyr::complete() -> tidyr::fill() workflow before pivoting.
+# But I have no idea how to expand the dataset. 
+impute_est <- function(.tbl) {
+        # To fill NA row-wise, we first have to obtain sub-tibbles
+        #       that consist of all numeric columns. 
+        # Then we can treat them as matrices. 
+        suppressWarnings(suppressMessages(require(zoo)))
+        non_dbl <- .tbl %>% select(!where(is_numeric))
+        non_dbl %>% bind_cols(
+                .tbl %>% select(where(is_numeric)) %>% 
+                apply(1, zoo::na.locf) %>% 
+                t() %>% 
+                as_tibble()
+        )
+}
+
+impute <- (fbi2002_6$AreaActuallyReporting == 1) %>% replace_na(FALSE)
+
+fbi2002_7 <- fbi2002_6
+
+fbi2002_7[impute, ] <- fbi2002_6[impute, ] %>% impute_est()
+fbi2002_7[impute, ] %>% complete.cases() %>% all
+```
+
+# Split 
+
+```{r}
+fbi2002_act <- fbi2002_7 %>% 
+        select(State:Population, ends_with("_act")) %>% 
+        rename_with(~ str_remove(.x, "_act"), ends_with("_act"))
+
+fbi2002_est <- fbi2002_7 %>% 
+        select(State:Population, ends_with("_est")) %>% 
+        rename_with(~ str_remove(.x, "_est"), ends_with("_est"))
+
+# don't have to impute any more
+fbi2002_est %>% filter(Area != "State Total") %>% complete.cases() %>% all
+
+save(fbi2002_act, fbi2002_est, file = "tidy_2002.RData")
+```
+
+
+
+
+
+

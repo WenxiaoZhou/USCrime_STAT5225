@@ -1,0 +1,220 @@
+---
+title: "Data Cleaning Report for FBI 2013"
+author: "Min Lin"
+date: "2021/03/18"
+header-includes:
+  - \usepackage[labelfont=bf,textfont=md]{caption}  
+  - \usepackage{float}
+  - \usepackage{enumerate}
+  - \setlength{\parskip}{1em}
+  - \usepackage{indentfirst} 
+  - \usepackage{amsmath}
+output:
+  rmdformats::readthedown:
+    toc: 2
+fontsize: 12pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE,fig.align='center',fig.pos="H")
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+![](data-science-explore.png) 
+
+# Import
+
+```{r}
+# only need to change the path
+path <- "C:\\Users\\Min\\OneDrive\\UConn\\Spring 2021\\BIST 5225_Data Management and Programming in R and SAS\\Group Assignment\\Crime_by_State\\2013.xls"
+# skip titles. In "2013.xls", there are three rows for useless titles. 
+fbi2013 <- readxl::read_excel(path, skip = 3) 
+```
+
+In "2013.xls", the first three rows are titles. 
+
+1. "Table 5": useless
+2. "Crime in the United States": useless
+3. "by State, 2013": the only useful information is "2013", but it has been captured by the name of our RData `fbi2013`.
+
+Also, we notice that after the 507th row are footnotes. 
+
+```{r}
+fbi2013$State %>% str_which("1")
+fbi2013[507:510,]
+fbi2013 <- fbi2013[1:507, 1:14]
+```
+
+The footnotes are copied here for future reference. 
+
+> __Footnotes__  
+1. The violent crime figures include the offenses of murder, rape (revised definition), robbery, and aggravated assault.   
+2. The figures shown in the rape (revised definition) column were estimated using the revised Uniform Crime Reporting (UCR) definition of rape. See data declaration for further explanation. 
+3. The figures shown in the rape (legacy definition) column were estimated using the legacy UCR definition of rape. See data declaration for further explanation.  
+4. Includes offenses reported by the Metro Transit Police and the Arson Investigation Unit of the District of Columbia Fire and Emergency Medical Services.    	
+5. Agencies within this state submitted rape data according to the legacy UCR definition of rape. 
+6. Agencies within this state submitted rape data according to both the revised UCR definition of rape and the legacy UCR definition of rape.  
+7. The figures submitted by Puerto Rico for rape were not verified and may not be comparable to previous years' data.
+__NOTE__:  Although arson data are included in the trend and clearance tables, sufficient data are not available to estimate totals for this offense.  Therefore, no arson data are published in this table.				
+
+		
+```{r}
+# Columns names. I use "index" for the third column. 
+names(fbi2013)  <- c("State","Area", "index", "Population", "ViolentCrimeRevised", 
+          "Murder", "RapeRevised", "RapeLegacy", "Robbery", "AggravatedAssault", 
+          "PropertyCrime", "Burglary", "LarcenyTheft",	"MotorTheft")
+```
+
+Note that we have "RapeRevised" and "RapeLegacy" two columns.
+
+# Tidy 
+## Prepare ID and pivoting index
+First of all, we need to identify the ID that uniquely defines a row. In our datasets, ID = {State, Area}. The State column contains 52 different values: 50 states along with Washington, D.C. and Puerto Rico. 
+```{r}
+fbi2013_1 <- fbi2013 %>% 
+        # Replace NA in the "State" column. 
+        # Every NA is filled by the first non-NA value on its above
+        fill(State, .direction = "down") %>% 
+        # since State has been fixed, grouped by it
+        group_by(State) %>% 
+        # within each state, fill for Area
+        # grouped by State to prevent the NA of an Area from being filled 
+        #       by values from the previous state
+        fill(Area, .direction = "down") %>% 
+        # modify values of index for pivot_wider (very important)
+        # we will use the three values of index 
+        #       to convert the data within each ID to a wider version
+        mutate(
+                Area = if_else(Area == "Total", "State Total", Area),
+                index = case_when(
+                        index == "Area actually reporting"             ~ "act",
+                        index %in% c("Estimated total", 
+                                     "Rate per 100,000 inhabitants")   ~ "est",
+                        TRUE                                           ~ "popu" # NA -> "popu"
+                )
+        ) %>% ungroup()
+```
+
+## Change values of State to propery case and trim ending digits
+```{r}
+state <- fbi2013_1 %>% pull(State)
+state[str_detect(state, "\\d$")] %>% unique # ends with a digit
+```
+
+```{r}
+fbi2013_1$State <- state %>% str_remove_all("[^[:alpha:][:blank:]]") %>% 
+        str_trim() %>% str_to_title()
+fbi2013_1$State %>% unique # nice! 50 states + DC + Puerto Rico
+```
+## Pivot wider
+```{r}
+fbi2013_2 <- fbi2013_1 %>% 
+        pivot_wider(names_from = index, values_from = Population:MotorTheft) 
+```
+
+```{r}
+fbi2013_3 <- fbi2013_2 %>%
+        rename(Population = Population_popu) %>%
+        mutate(
+                AreaActuallyReporting = round(as.numeric(Population_act), 3), # three digits
+                .after = Area
+        ) %>% select(
+                -Population_est, 
+                -Population_act,
+                # we have renamed Population_popu, so simply drop all columns ending with "_popu"
+                -ends_with("_popu")  
+        )
+# deal with "None" and NA is Population
+# all "None" with two AreaActuallyReporting not NA 
+fbi2013_3 %>% filter(is.na(Population) | Population == "None") %>% print(width = Inf)
+popu_impute <- fbi2013_3 %>% rowid_to_column() %>% 
+        filter(is.na(Population) | Population == "None", 
+               AreaActuallyReporting == 1) %>% .[["rowid"]] 
+popu_impute
+
+fbi2013_3$Population[popu_impute] <- "0"
+
+fbi2013_3 <- fbi2013_3 %>% 
+        # Population contains "None"; remove those rows 
+        # also, before pivoting, Population is a character because of the appearance of "None"
+        filter(Population != "None") %>% # NA's are also dropped
+        mutate(Population = as.numeric(Population)) 
+```
+## Impute NA in est
+As mentioned before, there are implicit missing in the dataset. Pivoting wider makes it explicit and automatically replaces missing elements by NA's. However, before filling NA in est by corresponding act, we need to be very cautious. 
+```{r}
+fbi2013_3 %>% filter(Area != "State Total") %>% 
+        map_dbl(~ sum(is.na(.x))) 
+fbi2013_3 %>% filter(Area != "State Total") %>% 
+        filter(!complete.cases(.)) %>% nrow 
+```
+Now it's clear. Out of total 148 rows, 100 rows miss act and 48 rows miss est; and the intersection is empty, which means we can still use those non-missing values in act to impute est. But we have to check Rapes.
+
+```{r}
+fbi2013_3 %>% filter(Area != "State Total") %>% 
+        select(AreaActuallyReporting, starts_with("Rape")) %>% 
+        filter(is.na(RapeRevised_est) | is.na(RapeLegacy_est)) %>% 
+        summarize(count_na_RapeRevised_act = sum(is.na(RapeRevised_act)),
+                  count_na_RapeLegacy_act = sum(is.na(RapeLegacy_act)), 
+                  nrow = n(), 
+                  Area_percent_1 = sum(AreaActuallyReporting == 1))
+```
+So we trace 48 missing in est to AreaActuallyReporting = 1. For act, the missing is complicated and care must be taken when doing imputation. 
+
+```{r}
+fbi2013_3 %>% filter(AreaActuallyReporting %>% near(1)) %>% 
+        select(ends_with("_est")) %>% 
+        map_dbl(~ sum(is.na(.x)))
+```
+Hooray! 
+```{r}
+# Actually can be replaced by tidyr::complete() -> tidyr::fill() workflow before pivoting.
+# But I have no idea how to expand the dataset. 
+impute_est <- function(.tbl) {
+        # To fill NA row-wise, we first have to obtain sub-tibbles
+        #       that consist of all numeric columns. 
+        # Then we can treat them as matrices. 
+        suppressWarnings(suppressMessages(require(zoo)))
+        non_dbl <- .tbl %>% select(!where(is_numeric))
+        non_dbl %>% bind_cols(
+                .tbl %>% select(where(is_numeric)) %>% 
+                apply(1, zoo::na.locf) %>% 
+                t() %>% 
+                as_tibble()
+        )
+}
+
+impute <- (fbi2013_3$AreaActuallyReporting == 1) %>% replace_na(FALSE)
+# double-check
+fbi2013_3[impute, ] %>% summarize(n_na_revised = sum(is.na(RapeRevised_est)),
+                             n_na_legacy = sum(is.na(RapeLegacy_est)))
+fbi2013_4 <- fbi2013_3
+
+fbi2013_4[impute, ] <- fbi2013_3[impute, ] %>% impute_est()
+fbi2013_4[impute, ] %>% complete.cases() %>% all
+```
+
+# Split 
+
+```{r}
+fbi2013_act <- fbi2013_4 %>% 
+        select(State:Population, ends_with("_act")) %>% 
+        rename_with(~ str_remove(.x, "_act"), ends_with("_act"))
+
+fbi2013_est <- fbi2013_4 %>% 
+        select(State:Population, ends_with("_est")) %>% 
+        rename_with(~ str_remove(.x, "_est"), ends_with("_est"))
+fbi2013_est[, -(1:3)] %>% complete.cases() %>% all
+
+save(fbi2013_act, fbi2013_est, file = "tidy_2013.RData")
+```
+
+
+
+
+
+
