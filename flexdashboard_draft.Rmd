@@ -1,0 +1,81 @@
+---
+title: "Untitled"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(readr)
+library(leaflet)
+library(DT)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(maps)
+library(dplyr)
+library(highcharter)
+library(viridisLite)
+library(forecast)
+library(flexdashboard)
+thm <- 
+  hc_theme(
+    colors = c("#1a6ecc", "#434348", "#90ed7d"),
+    chart = list(
+      backgroundColor = "transparent",
+      style = list(fontFamily = "Source Sans Pro")
+    ),
+    xAxis = list(
+      gridLineWidth = 1
+    )
+  )
+```
+
+```{r}
+#Load data from Year 2005 to 2019
+setwd("/Users/zhouwenxiao/Desktop/USCrime")
+load("fbi_2005to2019.RData")
+```
+
+Column {data-width=800}
+-------------------------------------------------------------
+
+### 2019 Violent Crime by State
+
+```{r}
+heat2019<-state_rate_per_100k_2005to2019 %>%
+    filter(Year=="2019") 
+heat2019<-heat2019[,c(1:3,5,7:14)]
+heat2019$Prorate<-heat2019$PropertyCrime/heat2019$Population
+heat2019$Viorate<-heat2019$ViolentCrimeRevised/heat2019$Population
+```
+
+### 2019 Property Crime by State
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+heat2019$Rape<-ifelse(is.na(heat2019$RapeLegacy),
+                                heat2019$RapeRevised,
+                                heat2019$RapeLegacy)
+heat2019$Violent<-ifelse(is.na(heat2019$ViolentCrimeLegacy),
+                         heat2019$ViolentCrimeRevised,
+                         ViolentCrimeLegacy)
+```
+
