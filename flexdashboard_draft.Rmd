@@ -10,14 +10,52 @@ runtime: shiny
 Introduction
 =======================================================
 
+```{r}
+library(flexdashboard)
+library(shiny)
+library(knitr)
+setwd("/Users/zhouwenxiao/Desktop/USCrime")
+```
+
+Row {data-height=400}
+----------------------------------------------------
+  
+### Introduction of App
+  
+This App is a visualization product on U.S. Crime Data report, we focus on three main parts: 
+
+(1) Overall time trend analysis of states crime
+(2) 2019 Crime data report
+(3) Relationship between crime levels and GDP levels among states
+
+For each part of the content, you can browse the specific content in turn through the options at the top of the page, and, in order to help you better use the product and obtain relevant information, we will add a "HELP" option in each column to explain the relevant definition of variables and some simple statistical analysis.
+
+Wish you enjoy using this app!!!
+
+
+
+Column
+----------------------------------------------------
+```{r out.width='80%',out.height='80%'}
+include_graphics('crime1.jpeg')
+```
+
+### Crime Types
+```{r}
+vio<-c("There are two types of crime: Property Crime and Violent Crime")
+valueBox(vio,icon="fad fa-scalpel")
+```
+
+### Analysis Summary
+```{r}
+pro<-c("52 States and 7 Regions are dicussed")
+valueBox(pro,icon="fas fa-flag-usa")
+```
+
+
 Overall Report
 ======================================================
 
-```{r}
-#Load data from Year 2005 to 2019
-setwd("/Users/zhouwenxiao/Desktop/USCrime")
-load("fbi_2005to2019.RData")
-```
 ```{r}
 library(ggplot2)
 library(sp)
@@ -33,9 +71,11 @@ library(dplyr)
 library(highcharter)
 library(viridisLite)
 library(forecast)
-library(flexdashboard)
-library(shiny)
 library(Hmisc)
+#Load data from Year 2005 to 2019
+load("fbi_2005to2019.RData")
+```
+```{r}
 lookup1<-unique(area_level_2005to2019$State)
 lookup2<-unique(area_level_2005to2019$Area)
 ```
@@ -309,17 +349,29 @@ data_bubb<-state_rate_per_100k_2005to2019 %>%
   mutate(across(4:14, transform))
 
 
-pacific<-which(data_bubb$State %in% capitalize(tolower(c("WASHINGTON","OREGON","CALIFORNIA","NEVADA","ALASKA","HAWAII"))))
-mountain<-which(data_bubb$State %in% capitalize(tolower(c("MONTANA","IDAHO","UTAH","ARIZONA","WYOMING","COLORADO","NEW MEXICO"))))
-central<-which(data_bubb$State %in% capitalize(tolower(c("NORTH DAKOTA","SOUTH DAKOTA","NEBRASKA","KANSAS","OKLAHOMA","TEXAS","MINNESOTA","IOWA","MISSOURI","ARKANSAS","LOUISIANA","WISCONSIN","ILLINOIS","TENNESSEE","MISSISSIPPI","ALABAMA"))))
-index2<-c(pacific,mountain,central)
-index1<-seq(1,dim(data_bubb)[1],1)
-eastern<-index1[!index1 %in% index2]
-data_bubb$index<-index1
-data_bubb$Section<-ifelse(data_bubb$index %in% pacific,"Pacific",
-                         ifelse(data_bubb$index %in% mountain,"Mountain",
-                                ifelse(data_bubb$index %in% central,"Central","Eastern")))
+#https://www.usawelcome.net/explore/good-to-know/general-info/the-regions-of-the-united-states.htm  (reference of division regions)
 
+new_england<-which(data_bubb$State %in% c("New Hampshire","Vermont",
+    "Connecticut","Rhode Island","Massachusetts","Maine"))
+mid_atlantic<-which(data_bubb$State %in% c("New York","Pennsylvania","New Jersey","Maryland","Delaware"))
+south<-which(data_bubb$State %in% c("Arkansas","Louisiana","Mississippi","Tennessee","Kentucky","Alabama","Georgia","Virginia","South Carolina","North Carolina","Florida"))
+rocky_mountain<-which(data_bubb$State %in% c("Nevada","Idaho","	
+Montana","Wyoming","Utah","Colorado"))
+south_west<-which(data_bubb$State %in% c("Arizona","New Mexico","Texas","Oklahoma"))
+pacific_coast<-c("Washington","Oregon","California","Alaska","Hawaii")
+
+index2<-c(new_england,mid_atlantic,south,rocky_mountain,south_west,pacific_coast)
+index1<-seq(1,dim(data_bubb)[1],1)
+midwest<-index1[!index1 %in% index2]
+
+data_bubb$index<-index1
+data_bubb$Section<-ifelse(data_bubb$index %in% new_england,"New England",
+  ifelse(data_bubb$index %in% mid_atlantic,"Mid Atlantic",
+  ifelse(data_bubb$index %in% south,"South",
+  ifelse(data_bubb$index %in% rocky_mountain, "Rocky Mountain",
+  ifelse(data_bubb$index %in% south_west,"South West",
+  ifelse(data_bubb$index %in% pacific_coast, "Pacific Coast",
+         "MidWest"))))))
 #Define a subset data includes Year, State, Section, ViolentCrime(total), PropertyCrime(total)
 data_bubb$ViolentCrime<-ifelse(is.na(data_bubb$ViolentCrimeRevised),
               data_bubb$ViolentCrimeLegacy,data_bubb$ViolentCrimeRevised)
@@ -350,6 +402,35 @@ ggplotly(p)
 
 
 
+Contact Info
+=======================================================
+
+Column
+------------------------------------------------
+
+### Thanks
+
+This App is a group work by Brisilda Ndreka, Min Lin and Wenxiao Zhou. Thank for everyone's hard work and wonderful ideas. 
+
+
+Thanks for using this App, hope you enjoy the visualization products providing here. 
+
+
+### Contact Infomation
+
+If you have any comments as well as the questions regarding this product, please feel free to contact us. Thanks!!!
+
+Wenxiao Zhou: wenxiao.zhou@uconn.edu
+
+Brisilda Ndreka: brisilda.ndreka@uconn.edu 
+
+Min Lin: min.2.lin@uconn.edu 
+
+Column
+---------------------------------------------
+```{r out.width='80%',out.height='100%'}
+include_graphics('thank you.png')
+```
 
 
 
