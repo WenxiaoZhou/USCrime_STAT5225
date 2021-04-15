@@ -17,7 +17,7 @@ library(knitr)
 setwd("/Users/zhouwenxiao/Desktop/USCrime")
 ```
 
-Row {data-height=400}
+Row {data-height=600}
 ----------------------------------------------------
   
 ### Introduction of App
@@ -358,7 +358,7 @@ south<-which(data_bubb$State %in% c("Arkansas","Louisiana","Mississippi","Tennes
 rocky_mountain<-which(data_bubb$State %in% c("Nevada","Idaho","	
 Montana","Wyoming","Utah","Colorado"))
 south_west<-which(data_bubb$State %in% c("Arizona","New Mexico","Texas","Oklahoma"))
-pacific_coast<-c("Washington","Oregon","California","Alaska","Hawaii")
+pacific_coast<-which(data_bubb$State %in% c("Washington","Oregon","California","Alaska","Hawaii"))
 
 index2<-c(new_england,mid_atlantic,south,rocky_mountain,south_west,pacific_coast)
 index1<-seq(1,dim(data_bubb)[1],1)
