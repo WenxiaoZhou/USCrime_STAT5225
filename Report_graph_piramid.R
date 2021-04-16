@@ -11,6 +11,8 @@ load("fbi_with_gdp.Rdata")
 #2019 data using crime rate
 data_2019<-subset(state_gdp,Year=="2019")
 head(data_2019)
+
+#######Pyramid_chart#######
 # Set highcharter options
 options(highcharter.theme = hc_theme_smpl(tooltip = list(valueDecimals = 2)))
 #property crime rate
