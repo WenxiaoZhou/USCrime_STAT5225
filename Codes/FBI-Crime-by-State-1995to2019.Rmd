@@ -1,0 +1,592 @@
+---
+title: "US Crime Report"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+DisplayMode: Showcase
+runtime: shiny
+---
+
+
+
+Introduction
+=======================================================
+
+```{r}
+library(flexdashboard)
+library(shiny)
+library(knitr)
+# setwd("/Users/zhouwenxiao/Desktop/USCrime")
+```
+
+Row {data-height=400}
+----------------------------------------------------
+  
+### Introduction of App
+  
+This App is a visualization product on U.S. Crime Data report, we focus on three main parts: 
+
+(1) Overall time trend analysis of states crime
+(2) 2019 Crime data report
+(3) Relationship between crime levels and economic (real GDP per capita) and geometric (seven regions) status of states.
+
+For each part of the content, you can browse the specific content in turn through the options at the top of the page. To learn more about our product, please refer to the "More Details" page as well as our detailed report.
+
+Wish you enjoy using this app!!!
+
+
+
+Column
+----------------------------------------------------
+```{r out.width='90%',out.height='80%'}
+include_graphics('crime1.jpeg')
+```
+
+### Crime Types
+```{r}
+vio <- c("There are two types of crime: Property Crime and Violent Crime")
+valueBox(vio,icon="fad fa-scalpel")
+```
+
+### Analysis Summary
+```{r}
+pro <- c("52 States and 7 Regions are dicussed")
+valueBox(pro,icon="fas fa-flag-usa")
+```
+
+More Details
+=======================================================
+
+### Description of Data
+Please refer to the three tables in the Section 2. Description of Data, if interested. 
+
+### For the page of Relationship Detection
+In the bubble charts, we have seven facets, each corresponding to one specific region. We divide the states into seven geographical regions. Especially, we classify District of Columbia into the Mid-Atlantic according to an online poll: http://www.city-data.com/forum/washington-dc/2561681-dc-north-south-middle-you-guys-15.html. 
+
+Each bubble represents one state (50 U.S. states along with District of Columbia). The size of the bubble reflects the amount of per capita real GDP. A larger bubble means greater GDP.  The horizontal and vertical axes stand for, respectively, the Property crime score (0-100) and Violent crime score (0-100). The higher the score is, the higher the risk is. Fur further technical details, please refer to Section 3.4 of our report. 
+
+
+
+
+
+Overall Report I
+======================================================
+
+```{r}
+library(tidyverse)
+library(sp)
+library(ggthemes)
+library(leaflet)
+library(DT)
+library(plotly)
+library(maps)
+library(highcharter)
+library(viridisLite)
+library(forecast)
+library(Hmisc)
+library(highcharter)
+#Load data from Year 1995 to 2019
+load("fbi_with_gdp.RData")
+```  
+
+```{r}
+lookup1 <- levels(area$State)
+lookup2 <- unique(area$Area) %>% droplevels()
+lookup3 <- unique(area$Year) 
+```
+
+Column {data-width=200 .sidebar}
+-----------------------------------------------
+
+```{r}
+selectInput('State_name',label='Select a State Name',choices=lookup1,
+            selected="Iowa")
+sliderInput('Year',label = "Select time range you want see for the state crime trend",min = 1995,max = 2019, value = c(2009,2019),step = 1, dragRange=TRUE)
+```  
+
+```{r}
+overtrend <- area %>%
+                 select(c(State,Area,Year,Population,ViolentCrime))
+overtrend$Area<-as.factor(overtrend$Area)
+```
+
+Row 
+-------------------------------------------------------
+
+### Comparative Time Trend, 1995-2019
+
+```{r}
+compare_trend<-reactive({
+    subset(overtrend,State==input$State_name & 
+                      Year>=input$Year[1] & Year<=input$Year[2])
+})
+```
+
+```{r}
+renderHighchart({
+  bubble<-hchart(compare_trend(),"scatter",
+               hcaes(x =Year, y =ViolentCrime, 
+                     size=Population, group=Area),maxSize='5%')
+bubble<-bubble %>% 
+  hc_title(text="Violent Crime in specified state") %>%
+  hc_xAxis(title=list(text="Year")) %>%
+  hc_yAxis(title=list(text="Total Violent Crime")) %>%
+  hc_chart(zoomType="xy")
+bubble
+})
+
+```
+
+
+Overall Report II
+======================================================
+
+Column {data-width=200 .sidebar}
+-----------------------------------------------
+
+```{r}
+selectInput('Year_map',label = "Select a year you want see for the state total crime comparison in heatmap and pyramid plots",choices=lookup3)
+```
+
+
+Row 
+--------------------------------------------------------------
+
+```{r}
+thm1 <-
+  hc_theme(
+    colors = c("#90ed7d", "#434348","#1a6ecc"),
+    chart = list(
+      backgroundColor = "transparent",
+      style = list(fontFamily = "Source Sans Pro")
+    ),
+    xAxis = list(
+      gridLineWidth = 1
+    )
+  )
+```
+
+### Pyramid Chart for Violent Crime Rate
+
+```{r}
+heat<-reactive({
+    state_gdp %>% filter(Year==input$Year_map)
+})
+heat1_ord<-reactive({
+  state_gdp[order(state_gdp$ViolentCrime),] %>%
+    filter(Year==input$Year_map)
+})
+heat2_ord<-reactive({
+  state_gdp[order(state_gdp$PropertyCrime),] %>%
+    filter(Year==input$Year_map)
+})
+```
+
+```{r}
+renderHighchart({
+  pyramid<-hchart(heat1_ord(),"pyramid",
+            hcaes(x = State, y =ViolentCrime,
+                  color=ViolentCrime))
+    pyramid<-pyramid %>% 
+  hc_title(text="Violent Crime Rate") 
+pyramid
+})
+
+```
+
+
+### Violent Crime Rate by State
+
+```{r}
+data("usgeojson")
+n <- 4
+colstops <- data.frame(
+  q = 0:n/n,
+  c = substring(viridis(n + 1), 0, 7)) %>%
+  list_parse2()
+renderHighchart({
+  heat<-state_gdp %>%
+    filter(Year==input$Year_map)
+  highchart() %>%
+    hc_add_series_map(usgeojson,heat,name="Crime Rate",
+                      value="ViolentCrime",
+                      joinBy =c("woename","State"),
+                      dataLabels=list(enabled=TRUE,
+                      format='{point.properties.postalcode}')) %>%
+  hc_colorAxis(stops = colstops) %>%
+  hc_legend(valueDecimals = 0, valueSuffix = "%") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_add_theme(thm1)
+})
+```
+
+
+Row 
+--------------------------------------------------------------
+
+### Pyramid Chart for Property Crime Rate
+
+```{r}
+renderHighchart({
+  pyramid1<-hchart(heat2_ord(),"pyramid",
+            hcaes(x = State, y =PropertyCrime,
+                  color=PropertyCrime))
+    pyramid1<-pyramid1 %>% 
+  hc_title(text="Property Crime Rate") 
+pyramid1
+})
+```
+
+### Property Crime Rate by State
+
+```{r}
+renderHighchart({
+  heat<-state_gdp %>%
+    filter(Year==input$Year_map)
+   highchart() %>%
+    hc_add_series_map(usgeojson,heat,name="Crime Rate",
+                      value="PropertyCrime",
+                      joinBy =c("woename","State"),
+                      dataLabels=list(enabled=TRUE,
+                      format='{point.properties.postalcode}')) %>%
+  hc_colorAxis(stops = colstops) %>%
+  hc_legend(valueDecimals = 0, valueSuffix = "%") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_add_theme(thm1)
+})
+```
+
+
+
+
+2019 Report
+=======================================================
+  
+Column {data-width=700}
+-------------------------------------------------------------
+  
+### 2019 Violent Crime by State
+  
+```{r}
+thm1 <-
+  hc_theme(
+    colors = c("#90ed7d", "#434348","#1a6ecc"),
+    chart = list(
+      backgroundColor = "transparent",
+      style = list(fontFamily = "Source Sans Pro")
+    ),
+    xAxis = list(
+      gridLineWidth = 1
+    )
+  )
+```
+
+
+```{r}
+data("usgeojson")
+heat2019<-state_gdp %>%
+  filter(Year=="2019")
+heat2019<-heat2019[,c(1:4,6:14)]
+n <- 4
+colstops <- data.frame(
+  q = 0:n/n,
+  c = substring(viridis(n + 1), 0, 7)) %>%
+  list_parse2()
+highchart() %>%
+  hc_add_series_map(usgeojson,heat2019,name="Crime Rate",
+                    value="ViolentCrime",
+                    joinBy =c("woename","State"),
+                    dataLabels=list(enabled=TRUE,
+                                    format='{point.properties.postalcode}')) %>%
+  hc_colorAxis(stops = colstops) %>%
+  hc_legend(valueDecimals = 0, valueSuffix = "%") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_add_theme(thm1)
+```
+
+
+### 2019 Property Crime by State
+
+
+```{r}
+highchart() %>%
+  hc_add_series_map(usgeojson,heat2019,name="Crime Rate",
+                    value="PropertyCrime",
+                    joinBy =c("woename","State"),
+                    dataLabels=list(enabled=TRUE,
+                   format='{point.properties.postalcode}')) %>%
+  hc_colorAxis(stops = colstops) %>%
+  hc_legend(valueDecimals = 0, valueSuffix = "%") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_add_theme(thm1)
+```
+
+Column {data-width=300}
+---------------------------------------
+  
+### Top State with High Murder Rate in 2019
+```{r}
+Murder2019<-heat2019$State[which(heat2019$Murder==max(heat2019$Murder))]
+valueBox(Murder2019,color="navy")
+```
+
+### Top State with High Rape Rate in 2019
+```{r}
+Rape2019<-heat2019$State[which(heat2019$Rape==max(heat2019$Rape))]
+valueBox(Rape2019,color="navy")
+```
+
+### Top State with High Robbery Rate in 2019
+```{r}
+Robbery2019<-heat2019$State[which(heat2019$Robbery==max(heat2019$Robbery))]
+valueBox(Robbery2019,color="navy")
+```
+
+### Top State with High Assualt Rate in 2019
+```{r}
+AggravatedAssault2019<-heat2019$State[which(heat2019$AggravatedAssault==max(heat2019$AggravatedAssault))]
+valueBox(AggravatedAssault2019,color="navy")
+```
+
+### Top State with High Burglary Rate in 2019
+```{r}
+Burglary2019<-heat2019$State[which(heat2019$Burglary==max(heat2019$Burglary))]
+valueBox(Burglary2019,color="green")
+```
+
+### Top State with High Larceny Theft Rate in 2019
+```{r}
+LarcenyTheft2019<-heat2019$State[which(heat2019$LarcenyTheft==max(heat2019$LarcenyTheft))]
+valueBox(LarcenyTheft2019,color="green")
+```
+
+### Top State with High Motor Theft Rate in 2019
+```{r}
+MotorTheft2019<-heat2019$State[which(heat2019$MotorTheft==max(heat2019$MotorTheft))]
+valueBox(MotorTheft2019,color="green")
+```
+
+
+Relationship Detection
+=======================================================
+  
+Column
+-------------------------------------------------------------
+
+### Relationship Between Crime Levels and GDP Levels
+
+```{r}
+library(ggplot2)
+library(gapminder) 
+library(gganimate) 
+library(plotly) 
+library(viridis) 
+# Region Data
+transform <- function(col, maximum = 100, digits = 2) {
+  lambda_list <- MASS::boxcox(col ~ 1,
+                              lambda = seq(-3, 3, 0.1), plotit = FALSE)
+  lambda <- (lambda_list$x)[which.max(lambda_list$y)]
+  if (near(lambda, 0)) {
+    res <- log(col)
+  } else {
+    res <- (col^lambda - 1) / lambda
+  }
+  .min <- min(res, na.rm = TRUE)
+  .max <- max(res, na.rm = TRUE)
+  ((res - .min) / (.max - .min) * maximum) %>% round(digits)
+}
+# data_bubb<-state_gdp %>%
+#   mutate(across(6:14, transform))
+
+
+#https://www.usawelcome.net/explore/good-to-know/general-info/the-regions-of-the-united-states.htm  (reference of division regions) 
+
+# Reason for classifying D.C. into Mid Atlantic:
+# http://www.city-data.com/forum/washington-dc/2561681-dc-north-south-middle-you-guys-15.html 
+
+data_bubb <- state_gdp %>%
+  filter(State != "Puerto Rico", Year >= 1997) %>% 
+  mutate(across(ViolentCrime:MotorTheft, transform), 
+         GDP_real_per_capita = GDP_real_per_capita %>% round(2)) %>% 
+  mutate(
+          Region = case_when(
+            State %in% c("New Hampshire","Vermont","Connecticut",
+                         "Rhode Island","Massachusetts","Maine") ~ "New England", 
+            State %in% c("New York","Pennsylvania","New Jersey",
+                         "Maryland","Delaware", 
+                         "District of Columbia")                  ~ "Mid-Atlantic", 
+            State %in% c("Arkansas","Louisiana","Mississippi",
+                         "Tennessee","Kentucky","Alabama",
+                         "Georgia","Virginia","South Carolina",
+                         "North Carolina","Florida")             ~ "Southeast",
+            State %in% c("Nevada","Idaho","Montana",
+                         "Wyoming","Utah","Colorado")            ~ "The Rocky Mountain",
+            State %in% c("Arizona","New Mexico","Texas",
+                         "Oklahoma")                             ~ "Southwest",
+            State %in% c("Washington","Oregon","California",
+                         "Alaska","Hawaii")                      ~ "Pacific Coastal", 
+            TRUE ~ "Midwest"
+          ) %>% as_factor()
+  ) %>% 
+  select(State, Year, GDP_real_per_capita, PropertyCrime, ViolentCrime, Region) %>% 
+  droplevels()
+
+p <- ggplot(data_bubb,
+          aes(x = PropertyCrime, y = ViolentCrime, 
+                         size = GDP_real_per_capita, fill = Region)) + 
+  geom_point( aes(frame = Year, id = State)) + 
+  scale_x_continuous(limits = c(0, 100)) +   
+  scale_y_continuous(limits = c(0, 100)) + 
+  scale_color_viridis(discrete = TRUE, option = "viridis") + 
+  labs(x = 'Property crime score', y = 'Violent crime score')
+
+p <- p + facet_wrap(~Region) + theme_bw()
+ggplotly(p) 
+```  
+
+<!-- Over Year State Level Data Under Area Categories {data-navmenu="Data Download" data-icon="fa-list"} -->
+<!-- ================================================================ -->
+
+<!-- ```{r} -->
+<!-- library(DT) -->
+<!-- overdown<-area -->
+<!-- overdown$Totalcrime<-overdown$ViolentCrime+overdown$PropertyCrime -->
+<!-- overdown1<-overdown %>% -->
+<!--   select(State, Area, Year, Population, ViolentCrime, Murder, -->
+<!--          Rape, Robbery, AggravatedAssault, PropertyCrime, -->
+<!--          Burglary,LarcenyTheft,MotorTheft,Totalcrime) -->
+<!-- overdown1 %>% -->
+<!--    datatable(extensions='Buttons', -->
+<!--              options=list(dom='Blfrtip', -->
+<!--                   buttons=c('copy', 'csv', 'excel', 'pdf', 'print'), -->
+<!--                            lengthMenu = list(c(10,25,50,-1), -->
+<!--                                              c(10,25,50,"All")))) -->
+<!-- ```   -->
+
+
+<!-- Over Year State Level Data Under Region Categories {data-navmenu="Data Download" data-icon="fa-list"} -->
+<!-- ================================================================ -->
+<!-- ```{r} -->
+<!-- data_bubb %>% -->
+<!--    datatable(extensions='Buttons', -->
+<!--              options=list(dom='Blfrtip', -->
+<!--                   buttons=c('copy', 'csv', 'excel', 'pdf', 'print'), -->
+<!--                            lengthMenu = list(c(10,25,50,-1), -->
+<!--                                              c(10,25,50,"All")))) -->
+<!-- ``` -->
+
+
+
+Area Level (crime count) {data-navmenu="Data Download" data-icon="fa-list"}
+======================================================
+
+```{r}
+library(DT)
+overdown<-area
+overdown$Totalcrime<-overdown$ViolentCrime+overdown$PropertyCrime
+overdown1<-overdown %>%
+  select(State, Area, Year, Population, ViolentCrime, Murder,
+         Rape, Robbery, AggravatedAssault, PropertyCrime,
+         Burglary,LarcenyTheft,MotorTheft,Totalcrime)
+
+df1 <- datatable(overdown1, extensions='Buttons',
+             options=list(dom='Blfrtip',
+                  buttons=c('copy', 'csv', 'excel', 'pdf', 'print'),
+                           lengthMenu = list(c(10,25,50,-1),
+                                             c(10,25,50,"All"))))
+df2 <- datatable(state_gdp, extensions='Buttons',
+             options=list(dom='Blfrtip',
+                  buttons=c('copy', 'csv', 'excel', 'pdf', 'print'),
+                           lengthMenu = list(c(10,25,50,-1),
+                                             c(10,25,50,"All"))))
+df3 <- datatable(data_bubb, extensions='Buttons',
+             options=list(dom='Blfrtip',
+                  buttons=c('copy', 'csv', 'excel', 'pdf', 'print'),
+                           lengthMenu = list(c(10,25,50,-1),
+                                             c(10,25,50,"All"))))
+renderDT(df1)
+```  
+
+State Level (crime rate per 100k inhabitant) {data-navmenu="Data Download" data-icon="fa-list"}
+====================================================== 
+
+```{r}
+renderDT(df2)
+```
+
+State Scores for Relationship Detection {data-navmenu="Data Download" data-icon="fa-list"}
+====================================================== 
+
+```{r}
+renderDT(df3)
+```
+
+
+
+<!-- State Level with GDP {data-navmenu="Data Download"} -->
+<!-- ====================================================== -->
+<!-- ```{r} -->
+<!-- datatable(state_gdp, filter ='top') -->
+<!-- ```   -->
+
+
+<!-- State Crime Scores for Relationship Detection {data-navmenu="Data Download" data-icon="fa-list"} -->
+<!-- ====================================================== -->
+
+
+<!-- Column {data-width=500} -->
+<!-- ----------------------------------------------------------------------- -->
+
+<!-- ### Chart A -->
+
+<!-- ```{r} -->
+<!-- datatable(df1, filter ='top') -->
+<!-- ``` -->
+
+<!-- Column {data-width=500} -->
+<!-- ----------------------------------------------------------------------- -->
+
+<!-- ### Chart B -->
+
+<!-- ```{r} -->
+<!-- datatable(df2, filter ='top') -->
+<!-- ``` -->
+
+<!-- ### Chart C -->
+
+<!-- ```{r} -->
+<!-- datatable(df3, filter ='top') -->
+<!-- ``` -->
+
+Contact Info
+======================================================= 
+
+Column 
+------------------------------------------------ 
+
+### Thanks 
+
+This App is a group work by Brisilda Ndreka, Min Lin and Wenxiao Zhou. Thank for everyone's hard work and wonderful ideas.  
+
+
+Thanks for using this App, hope you enjoy the visualization products providing here.  
+
+
+### Contact Infomation 
+
+If you have any comments as well as the questions regarding this product, please feel free to contact us. Thanks!!! 
+
+Wenxiao Zhou: wenxiao.zhou@uconn.edu 
+
+Brisilda Ndreka: brisilda.ndreka@uconn.edu  
+
+Min Lin: min.2.lin@uconn.edu  
+
+
+Column
+---------------------------------------------
+```{r out.width='100%',out.height='100%'}
+include_graphics('thank you.png')
+```
+
